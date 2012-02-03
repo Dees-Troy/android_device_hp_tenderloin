@@ -265,11 +265,6 @@ void liftoff(void)
 #if EVENT_DEBUG
 	printf("liftoff function\n");
 #endif
-	send_uevent(uinput_fd, EV_ABS, ABS_MT_SLOT, tpoint[0].tracking_id);
-	send_uevent(uinput_fd, EV_ABS, ABS_MT_TRACKING_ID, tpoint[0].tracking_id);
-	send_uevent(uinput_fd, EV_ABS, ABS_MT_TOUCH_MAJOR, 0);
-	send_uevent(uinput_fd, EV_ABS, ABS_MT_POSITION_X, tpoint[0].x);
-	send_uevent(uinput_fd, EV_ABS, ABS_MT_POSITION_Y, tpoint[0].y);
 	send_uevent(uinput_fd, EV_SYN, SYN_MT_REPORT, 0);
 	send_uevent(uinput_fd, EV_SYN, SYN_REPORT, 0);
 	send_uevent(uinput_fd, EV_KEY, BTN_TOUCH, 0);
@@ -604,27 +599,6 @@ int calc_point(void)
 			}
 		}
 	}
-	// lift off any missing IDs
-	if (previoustpc > tpc) {
-		for (i=0; i<previoustpc; i++) {
-			if (!tracking_id_in_use[prevtpoint[i].tracking_id]) {
-#if EVENT_DEBUG
-				printf("lifted off tracking ID %i\n", prevtpoint[i].tracking_id);
-#endif
-#if TRACK_ID_DEBUG
-				printf("lifted off tracking ID %i\n", prevtpoint[i].tracking_id);
-#endif
-				send_uevent(uinput_fd, EV_ABS, ABS_MT_SLOT, prevtpoint[i].tracking_id);
-				send_uevent(uinput_fd, EV_ABS, ABS_MT_TRACKING_ID, prevtpoint[i].tracking_id);
-				send_uevent(uinput_fd, EV_ABS, ABS_MT_TOUCH_MAJOR, 0);
-				send_uevent(uinput_fd, EV_ABS, ABS_MT_POSITION_X, prevtpoint[i].x);
-				send_uevent(uinput_fd, EV_ABS, ABS_MT_POSITION_Y, prevtpoint[i].y);
-				send_uevent(uinput_fd, EV_SYN, SYN_MT_REPORT, 0);
-				//send_uevent(uinput_fd, EV_SYN, SYN_REPORT, 0);
-				//send_uevent(uinput_fd, EV_KEY, BTN_TOUCH, 0);
-			}
-		}
-	}
 
 	/* Filter touches for impossibly large moves that indicate a liftoff and
 	 * re-touch */
@@ -692,9 +666,10 @@ int calc_point(void)
 			tpoint[k].isValid = 0;
 		}
 	}
-
-	send_uevent(uinput_fd, EV_SYN, SYN_REPORT, 0);
-	send_uevent(uinput_fd, EV_KEY, BTN_TOUCH, 1);
+	if (tpc > 0) {
+		send_uevent(uinput_fd, EV_SYN, SYN_REPORT, 0);
+		send_uevent(uinput_fd, EV_KEY, BTN_TOUCH, 1);
+	}
 	previoustpc = tpc; // store the touch count for the next run
 	return tpc; // return the touch count
 }
