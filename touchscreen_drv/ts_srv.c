@@ -72,7 +72,7 @@
 
 #define MAX_TOUCH 5
 #define MAX_CLIST 75
-#define MAX_DELTA 25 // This value is squared to prevent the need to use sqrt
+#define MAX_DELTA 16900 // This value is squared to prevent the need to use sqrt
 #define TOUCH_THRESHOLD 36 // Threshold for what is considered a valid touch
 
 // Enables filtering of larger touch areas like the side of your thumb into
@@ -101,6 +101,7 @@
 #define MIN(X,Y) ((X) < (Y) ? (X) : (Y))
 #define MAX(X,Y) ((X) > (Y) ? (X) : (Y))
 #define isBetween(A, B, C) ( ((A-B) > 0) && ((A-C) < 0) )
+#define MAX_TRACK_ID MAX_TOUCH * 2
 
 struct candidate {
 	int pw;
@@ -113,6 +114,7 @@ struct touchpoint {
 	int pw;
 	float i;
 	float j;
+	int slot;
 	int tracking_id;
 	float direction;
 	float distance;
@@ -300,41 +302,6 @@ void check_large_area_points(int *highi, int *highj, int i, int j, int *mini, in
 }
 #endif
 
-void swap_touchpoints(struct touchpoint *tpoint1, struct touchpoint *tpoint2) {
-	struct touchpoint copytemp;
-
-	copytemp.pw = tpoint2->pw;
-	tpoint2->pw = tpoint1->pw;
-	tpoint1->pw = copytemp.pw;
-	copytemp.i = tpoint2->i;
-	tpoint2->i = tpoint1->i;
-	tpoint1->i = copytemp.i;
-	copytemp.j = tpoint2->j;
-	tpoint2->j = tpoint1->j;
-	tpoint1->j = copytemp.j;
-	copytemp.tracking_id = tpoint2->tracking_id;
-	tpoint2->tracking_id = tpoint1->tracking_id;
-	tpoint1->tracking_id = copytemp.tracking_id;
-	copytemp.direction = tpoint2->direction;
-	tpoint2->direction = tpoint1->direction;
-	tpoint1->direction = copytemp.direction;
-	copytemp.distance = tpoint2->distance;
-	tpoint2->distance = tpoint1->distance;
-	tpoint1->distance = copytemp.distance;
-	copytemp.touch_major = tpoint2->touch_major;
-	tpoint2->touch_major = tpoint1->touch_major;
-	tpoint1->touch_major = copytemp.touch_major;
-	copytemp.x = tpoint2->x;
-	tpoint2->x = tpoint1->x;
-	tpoint1->x = copytemp.x;
-	copytemp.y = tpoint2->y;
-	tpoint2->y = tpoint1->y;
-	tpoint1->y = copytemp.y;
-	copytemp.isValid = tpoint2->isValid;
-	tpoint2->isValid = tpoint1->isValid;
-	tpoint1->isValid = copytemp.isValid;
-}
-
 int calc_point(void)
 {
 	int i,j,k,l;
@@ -362,6 +329,7 @@ int calc_point(void)
 		prev2tpoint[i].i = prevtpoint[i].i;
 		prev2tpoint[i].j = prevtpoint[i].j;
 		prev2tpoint[i].pw = prevtpoint[i].pw;
+		prev2tpoint[i].slot = prevtpoint[i].slot;
 		prev2tpoint[i].tracking_id = prevtpoint[i].tracking_id;
 		prev2tpoint[i].direction = prevtpoint[i].direction;
 		prev2tpoint[i].distance = prevtpoint[i].distance;
@@ -372,6 +340,7 @@ int calc_point(void)
 		prevtpoint[i].i = tpoint[i].i;
 		prevtpoint[i].j = tpoint[i].j;
 		prevtpoint[i].pw = tpoint[i].pw;
+		prevtpoint[i].slot = tpoint[i].slot;
 		prevtpoint[i].tracking_id = tpoint[i].tracking_id;
 		prevtpoint[i].direction = tpoint[i].direction;
 		prevtpoint[i].distance = tpoint[i].distance;
@@ -466,132 +435,108 @@ int calc_point(void)
 			tpoint[tpc].i = avgi;
 			tpoint[tpc].j = avgj;
 			tpoint[tpc].touch_major = clist[k].touch_major;
+			tpoint[tpc].slot = -1;
 			tpoint[tpc].tracking_id = -1;
 			tpoint[tpc].isValid = 1;
+#if AVG_FILTER
+			avg_filter(&tpoint[tpc]);
+#endif // AVG_FILTER
+#if USERSPACE_270_ROTATE
+			tpoint[tpc].x = tpoint[tpc].i*768/29;
+			tpoint[tpc].y = 1024-tpoint[tpc].j*1024/39;
+#else
+			tpoint[tpc].x = 1024-tpoint[tpc].j*1024/39;
+			tpoint[tpc].y = 768-tpoint[tpc].i*768/29;
+#endif // USERSPACE_270_ROTATE
 			tpc++;
 #if DEBUG
 			printf("Coords %d %lf, %lf, %d\n", tpc, avgi, avgj, tweight);
 #endif
 		}
 	}
-	int tracking_id_in_use[MAX_TOUCH];
-		for (i=0; i<MAX_TOUCH; i++)
-			tracking_id_in_use[i] = 0;
+
 	// match up tracking IDs
+	int tracking_id_in_use[MAX_TRACK_ID];
+	memset(tracking_id_in_use, 0, sizeof tracking_id_in_use);
+	int slot_in_use[MAX_TOUCH];
+	memset(slot_in_use, 0, sizeof slot_in_use);
 	{
-		float smallest_distance;
-		int smallest_distance_loc;
-		
-		int changes = 0;
-#if TRACK_ID_DEBUG
-		if (previoustpc != tpc) {
-			printf("********> TOUCH COUNT CHANGE!, prevtpc: %i tpc %i\n", previoustpc, tpc);
-			for (i=0; i<tpc; i++) 
-				printf("      tpoint[%i] - %lf , %lf\n", i, tpoint[i].i, tpoint[i].j);
-			for (i=0; i<previoustpc; i++) 
-				printf("  prevtpoint[%i] - %lf , %lf   ID: %i\n", i, prevtpoint[i].i, prevtpoint[i].j, prevtpoint[i].tracking_id);
+		int smallest_distance[MAX_TOUCH], cur_distance;
+		int deltax,deltay;
+		int smallest_distance_loc[MAX_TOUCH];
+		// Find closest points for each touch
+		for (i=0; i<tpc; i++) {
+			smallest_distance[i]=1000000;
+			smallest_distance_loc[i]=-1;
+			for (j=0; j<previoustpc; j++) {
+				deltax = tpoint[i].x - prevtpoint[j].x;
+				deltay = tpoint[i].y - prevtpoint[j].y;
+				cur_distance = (deltax * deltax) + (deltay * deltay);
+				if(cur_distance < smallest_distance[i]) {
+					smallest_distance[i] = cur_distance;
+					smallest_distance_loc[i] = j;
+				}
+			}
 		}
-#endif
-		while (changes < MAX(tpc, previoustpc)) {
-			for (i=changes; i<tpc; i++) {
-				int needs_swap = 0;
-				float absi = fabsf(tpoint[i].i - prevtpoint[i].i),
-					  absj = fabsf(tpoint[i].j - prevtpoint[i].j);
-				smallest_distance = (absi * absi) + (absj + absj);
-				smallest_distance_loc = i;
-#if TRACK_ID_DEBUG
-				if (previoustpc != tpc) printf("--i=%i smallest_distance=%lf smallest_loc=%i absi=%lf absj=%lf\n", i, smallest_distance, smallest_distance_loc, absi, absj);
-				if (previoustpc != tpc) printf("--tpoint.i=%lf , tpoint.j=%lf\n", tpoint[i].i, tpoint[i].j);
-#endif
-				for (j=i+1; j<previoustpc; j++) {
-					absi = fabsf(tpoint[i].i - prevtpoint[j].i);
-					absj = fabsf(tpoint[i].j - prevtpoint[j].j);
-#if TRACK_ID_DEBUG
-					if (previoustpc != tpc) printf("++j=%i absi=%lf absj=%lf new_distance=%lf\n", j, absi, absj, (absi * absi) + (absj + absj));
-					if (previoustpc != tpc) printf("++prevtpoint.i=%lf , prevtpoint.j=%lf\n", prevtpoint[i].i, prevtpoint[i].j);
-#endif
-					if ((absi * absi) + (absj + absj) < smallest_distance) {
-						smallest_distance = (absi * absi) + (absj + absj);
-						smallest_distance_loc = j;
-						needs_swap = 1;
-#if TRACK_ID_DEBUG
-						if (previoustpc != tpc) printf("*****new smaller distance found in j=%i smallest_distance=%lf\n", j, smallest_distance);
-#endif
-					}
-				}
-				if (needs_swap) {
-					swap_touchpoints(&prevtpoint[smallest_distance_loc], &prevtpoint[i]);
-#if TRACK_ID_DEBUG
-					if (previoustpc != tpc) printf("XXXXXswapped prevtpoint %i and %i\n", i, smallest_distance_loc);
-#endif
+
+		// Remove mapping for touches which aren't closest
+		for (i=0; i<tpc; i++) {
+			for (j=i+1; j<tpc; j++) {
+				if (smallest_distance_loc[i] > -1 && smallest_distance_loc[i] == smallest_distance_loc[j]) {
+					if (smallest_distance[i] < smallest_distance[j])
+						smallest_distance_loc[j] = -1;
+					else
+						smallest_distance_loc[i] = -1;
 				}
 			}
+		}
+
+		// Assign ids to closest touches
+		for (i=0; i<tpc; i++) {
+			if (smallest_distance_loc[i] > -1) {
 #if TRACK_ID_DEBUG
-			if (previoustpc != tpc) printf("<<<<<<<<<<<switch from prevtpoint to tpoint scanning>>>>>>>>>>>>\n");
+				printf("Continued Mapping %d - %d,%d - %lf,%lf -> %lf,%lf\n", prevtpoint[smallest_distance_loc[i]].tracking_id, smallest_distance_loc[i], i, tpoint[i].i, tpoint[i].j, prevtpoint[smallest_distance_loc[i]].i,prevtpoint[smallest_distance_loc[i]].j);
 #endif
-			for (i=changes; i<previoustpc; i++) {
-				int needs_swap = 0;
-				float absi = fabsf(prevtpoint[i].i - tpoint[i].i),
-					  absj = fabsf(prevtpoint[i].j - tpoint[i].j);
-				smallest_distance = (absi * absi) + (absj + absj);
-				smallest_distance_loc = i;
-#if TRACK_ID_DEBUG
-				if (previoustpc != tpc) printf("--i=%i smallest_distance=%lf smallest_loc=%i absi=%lf absj=%lf\n", i, smallest_distance, smallest_distance_loc, absi, absj);
-				if (previoustpc != tpc) printf("--tpoint.i=%lf , tpoint.j=%lf\n", tpoint[i].i, tpoint[i].j);
-#endif
-				for (j=i+1; j<tpc; j++) {
-					absi = fabsf(prevtpoint[i].i - tpoint[j].i);
-					absj = fabsf(prevtpoint[i].j - tpoint[j].j);
-#if TRACK_ID_DEBUG
-					if (previoustpc != tpc) printf("++j=%i absi=%lf absj=%lf new_distance=%lf\n", j, absi, absj, (absi * absi) + (absj + absj));
-					if (previoustpc != tpc) printf("++tpoint.i=%lf , tpoint.j=%lf\n", tpoint[i].i, tpoint[i].j);
-#endif
-					if ((absi * absi) + (absj + absj) < smallest_distance) {
-						smallest_distance = (absi * absi) + (absj + absj);
-						smallest_distance_loc = j;
-						needs_swap = 1;
-#if TRACK_ID_DEBUG
-						if (previoustpc != tpc) printf("*****new smaller distance found in j=%i smallest_distance=%lf\n", j, smallest_distance);
-#endif
-					}
-				}
-				if (needs_swap) {
-					swap_touchpoints(&tpoint[smallest_distance_loc], &tpoint[i]);
-#if TRACK_ID_DEBUG
-					if (previoustpc != tpc) printf("XXXXXswapped tpoint %i and %i\n", i, smallest_distance_loc);
-#endif
-				}
+				tpoint[i].tracking_id = prevtpoint[smallest_distance_loc[i]].tracking_id;
+				tracking_id_in_use[tpoint[i].tracking_id] = 1;
+				tpoint[i].slot = prevtpoint[smallest_distance_loc[i]].slot;
+				slot_in_use[prevtpoint[smallest_distance_loc[i]].slot] = 1;
 			}
-			tpoint[changes].tracking_id = prevtpoint[changes].tracking_id;
-			tracking_id_in_use[tpoint[changes].tracking_id] = 1;
 #if TRACK_ID_DEBUG
-			if (previoustpc != tpc) printf("^^^^^^^^^^^^at tpoint[%i], tracking id: %i | tpoint %lf , %lf || prevtpoint %lf, %lf\n", i, tpoint[changes].tracking_id, tpoint[changes].i, tpoint[changes].j, prevtpoint[changes].i, prevtpoint[changes].j);
-#endif
-			changes++;
-#if TRACK_ID_DEBUG
-			if (previoustpc != tpc) {
-				printf("       pass complete, changes is now %i\n", changes);
-				for (i=0; i<tpc; i++) 
-					printf("      tpoint[%i] - %lf , %lf   ID: %i\n", i, tpoint[i].i, tpoint[i].j, tpoint[i].tracking_id);
-				for (i=0; i<previoustpc; i++) 
-					printf("  prevtpoint[%i] - %lf , %lf   ID: %i\n", i, prevtpoint[i].i, prevtpoint[i].j, prevtpoint[i].tracking_id);
-			}
+			else
+				printf("New Mapping - %lf,%lf\n", tpoint[i].i, tpoint[i].j);
 #endif
 		}
-#if TRACK_ID_DEBUG
-		if (previoustpc != tpc) printf("--------> TOUCH COUNT CHANGE END! ---------------------------\n");
-#endif
 	}
+
 	// assign unused tracking IDs to touches that don't have an ID yet
 	for (i=0; i<tpc; i++) {
 		if (tpoint[i].tracking_id < 0 && tpoint[i].isValid) {
 			j=0;
-			while (j < MAX_TOUCH) {
+			while (j < MAX_TRACK_ID) {
 				if (tracking_id_in_use[j] == 0) {
 					tpoint[i].tracking_id = j;
 					tracking_id_in_use[j] = 1;
 #if TRACK_ID_DEBUG
 					printf("assign new ID to tpoint[%i], tracking id: %i | %lf , %lf\n", i, tpoint[i].tracking_id, tpoint[i].i, tpoint[i].j);
+#endif
+					j = MAX_TRACK_ID;
+				}
+				j++;
+			}
+		}
+	}
+
+	// assign unused slots to touches that don't have a slot yet
+	for (i=0; i<tpc; i++) {
+		if (tpoint[i].slot < 0 && tpoint[i].isValid) {
+			j=0;
+			while (j < MAX_TOUCH) {
+				if (slot_in_use[j] == 0) {
+					tpoint[i].slot = j;
+					slot_in_use[j] = 1;
+#if TRACK_ID_DEBUG
+					printf("assign new slot to tpoint[%i], slot: %i | %lf , %lf\n", i, tpoint[i].slot, tpoint[i].i, tpoint[i].j);
 #endif
 					j = MAX_TOUCH;
 				}
@@ -602,26 +547,36 @@ int calc_point(void)
 
 	/* Filter touches for impossibly large moves that indicate a liftoff and
 	 * re-touch */
-	if (previoustpc == 1 && tpc == 1) {
-		float deltai, deltaj, total_delta;
-		deltai = tpoint[0].i - prevtpoint[0].i;
-		deltaj = tpoint[0].j - prevtpoint[0].j;
-		// calculate squared hypotenuse
-		total_delta = (deltai * deltai) + (deltaj * deltaj);
-		if (total_delta > MAX_DELTA) {
-#if EVENT_DEBUG
-			printf("max delta liftoff for tracking ID: %i\n", tpoint[0].tracking_id);
+	for (i=0; i<tpc; i++) {
+		for (j=0; j<previoustpc; j++) {
+			if (tpoint[i].slot == prevtpoint[j].slot) {
+				int deltax, deltay, total_delta;
+				deltax = tpoint[i].x - prevtpoint[j].x;
+				deltay = tpoint[i].y - prevtpoint[j].y;
+				// calculate squared hypotenuse
+				total_delta = (deltax * deltax) + (deltay * deltay);
+				if (total_delta > MAX_DELTA) {
+#if TRACK_ID_DEBUG
+					printf("max delta for tracking ID: %i assigning new ID\n", tpoint[i].tracking_id);
 #endif
-			liftoff();
+					for (k=MAX_TRACK_ID; k>=0; k--) {
+						if (!tracking_id_in_use[k]) {
+							tpoint[i].tracking_id = k;
+							tracking_id_in_use[k] = 1;
+							k = -1;
+#if TRACK_ID_DEBUG
+							printf("new ID assigned: %i\n", tpoint[i].tracking_id);
+#endif
+						}
+					}
+				}
+			}
 		}
 	}
 
 	// report touches
 	for (k = 0; k < tpc; k++) {
 		if (tpoint[k].isValid) {
-#if AVG_FILTER
-			avg_filter(&tpoint[k]);
-#endif // AVG_FILTER
 #if DEBOUNCE_FILTER
 			// The debounce filter only works on a single touch.
 			// We record the initial touchdown point, calculate a radius in
@@ -653,13 +608,6 @@ int calc_point(void)
 			send_uevent(uinput_fd, EV_ABS, ABS_MT_SLOT, tpoint[k].tracking_id);
 			send_uevent(uinput_fd, EV_ABS, ABS_MT_TRACKING_ID, tpoint[k].tracking_id);
 			send_uevent(uinput_fd, EV_ABS, ABS_MT_TOUCH_MAJOR, tpoint[k].touch_major);
-#if USERSPACE_270_ROTATE
-			tpoint[k].x = tpoint[k].i*768/29;
-			tpoint[k].y = 1024-tpoint[k].j*1024/39;
-#else
-			tpoint[k].x = 1024-tpoint[k].j*1024/39;
-			tpoint[k].y = 768-tpoint[k].i*768/29;
-#endif // USERSPACE_270_ROTATE
 			send_uevent(uinput_fd, EV_ABS, ABS_MT_POSITION_X, tpoint[k].x);
 			send_uevent(uinput_fd, EV_ABS, ABS_MT_POSITION_Y, tpoint[k].y);
 			send_uevent(uinput_fd, EV_SYN, SYN_MT_REPORT, 0);
@@ -810,6 +758,7 @@ void clear_arrays(void)
 	for(i=0; i<MAX_TOUCH; i++) {
 		tpoint[i].i = -1000;
 		tpoint[i].j = -1000;
+		tpoint[i].slot = -1;
 		tpoint[i].tracking_id = -1;
 		tpoint[i].direction = 0;
 		tpoint[i].distance = 0;
@@ -818,6 +767,7 @@ void clear_arrays(void)
 
 		prevtpoint[i].i = -1000;
 		prevtpoint[i].j = -1000;
+		prevtpoint[i].slot = -1;
 		prevtpoint[i].tracking_id = -1;
 		prevtpoint[i].direction = 0;
 		prevtpoint[i].distance = 0;
@@ -826,6 +776,7 @@ void clear_arrays(void)
 
 		prev2tpoint[i].i = -1000;
 		prev2tpoint[i].j = -1000;
+		prev2tpoint[i].slot = -1;
 		prev2tpoint[i].tracking_id = -1;
 		prev2tpoint[i].direction = 0;
 		prev2tpoint[i].distance = 0;
@@ -921,3 +872,4 @@ int main(int argc, char** argv)
 
 	return 0;
 }
+
