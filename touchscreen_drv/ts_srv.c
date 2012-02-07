@@ -88,8 +88,8 @@
 #define MAX_DELTA_ANGLE 0.25
 #define MAX_DELTA_DEBUG 0 // Set to 1 to see debug logging for max delta
 
-#define TOUCH_THRESHOLD 28 // Threshold for what is considered a valid touch
-#define LARGE_AREA_UNPRESS TOUCH_THRESHOLD - 4 // Threshold for end of a large area
+#define TOUCH_THRESHOLD 26 // Threshold for what is considered a valid touch
+#define LARGE_AREA_UNPRESS TOUCH_THRESHOLD - 6 // Threshold for end of a large area
 #define LARGE_AREA_FRINGE 15 // Threshold for large area fringe
 // Used to decide if an adjacent point is part of a separate touch
 #define PINCH_THRESHOLD 16
