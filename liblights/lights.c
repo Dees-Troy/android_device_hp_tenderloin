@@ -65,7 +65,7 @@ void touchscreen_power(int enable)
 
     if (enable) {
 	int retry_count = 0;
-
+	system("start tsdriver");
 try_again:
 	/* Set reset so the chip immediatelly sees it */
         lseek(xres_fd, 0, SEEK_SET);
@@ -163,7 +163,7 @@ try_again:
         rc = write(xres_fd, "0", 1);
         /* XXX, should be correllated with LIFTOFF_TIMEOUT in ts driver */
         usleep(80000);
-
+	system("stop tsdriver");
     }
 }
 
