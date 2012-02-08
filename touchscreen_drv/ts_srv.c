@@ -624,6 +624,7 @@ int calc_point(void)
 #endif
 					tpoint[i].tracking_id = prevtpoint[smallest_distance_loc[i]].tracking_id;
 					tpoint[i].prev_loc = smallest_distance_loc[i];
+					tpoint[i].touch_delay = prevtpoint[smallest_distance_loc[i]].touch_delay;
 #if MAX_DELTA_FILTER
 					tpoint[i].distance = smallest_distance[i];
 					tpoint[i].direction = atan2(tpoint[i].x - prevtpoint[smallest_distance_loc[i]].x, tpoint[i].y - prevtpoint[smallest_distance_loc[i]].y);
