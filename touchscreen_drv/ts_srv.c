@@ -104,10 +104,8 @@
 // Threshold for end of a large area. This value needs to be set low enough
 // to filter out large touch areas and tends to be related to other touch
 // thresholds.
-#define LARGE_AREA_UNPRESS 26 //TOUCH_CONTINUE_THRESHOLD
+#define LARGE_AREA_UNPRESS 32 //TOUCH_CONTINUE_THRESHOLD
 #define LARGE_AREA_FRINGE 15 // Threshold for large area fringe
-// Used to decide if an adjacent point is part of a separate touch
-#define PINCH_THRESHOLD 16
 
 // Enables filtering of a single touch to make it easier to long press.
 // Keeps the initial touch point the same so long as it stays within
@@ -327,7 +325,7 @@ void determine_area_loc_fringe(float *isum, float *jsum, int *tweight, int i, in
 
 void determine_area_loc(float *isum, float *jsum, int *tweight, int i, int j, int *mini, int *maxi, int *minj, int *maxj, int cur_touch_id, int *highest_val){
 	// Invalidate this touch point so that we don't process it later
-	invalid_matrix[i][j] = -1;
+	invalid_matrix[i][j] = cur_touch_id;
 	if (i < *mini)
 		*mini = i;
 	if (i > *maxi)
@@ -348,28 +346,28 @@ void determine_area_loc(float *isum, float *jsum, int *tweight, int i, int j, in
 	// Check nearby points to see if they are above LARGE_AREA_UNPRESS
 	if (i > 0  && invalid_matrix[i-1][j] != -1 && invalid_matrix[i-1][j] != cur_touch_id && matrix[i-1][j]) {
 		// In touch area or in fringe and decreasing
-		if (matrix[i-1][j] >= LARGE_AREA_UNPRESS && matrix[i-1][j] < matrix[i][j] + PINCH_THRESHOLD)
+		if (matrix[i-1][j] >= LARGE_AREA_UNPRESS)
 			determine_area_loc(isum, jsum, tweight, i - 1, j, mini, maxi, minj, maxj, cur_touch_id, highest_val);
 		else if(matrix[i-1][j] >= LARGE_AREA_FRINGE && matrix[i-1][j] < matrix[i][j])
 			determine_area_loc_fringe(isum, jsum, tweight, i - 1, j, cur_touch_id);
 	}
 	if(i < 29 && invalid_matrix[i+1][j] != -1 && invalid_matrix[i+1][j] != cur_touch_id && matrix[i+1][j]) {
 	// In touch area or in fringe and decreasing
-		if (matrix[i+1][j] >= LARGE_AREA_UNPRESS && matrix[i+1][j] < matrix[i][j] + PINCH_THRESHOLD)
+		if (matrix[i+1][j] >= LARGE_AREA_UNPRESS)
 			determine_area_loc(isum, jsum, tweight, i + 1, j, mini, maxi, minj, maxj, cur_touch_id, highest_val);
 		else if (matrix[i+1][j] >= LARGE_AREA_FRINGE && matrix[i+1][j] < matrix[i][j])
 			determine_area_loc_fringe(isum, jsum, tweight, i + 1, j, cur_touch_id);
 	}
 	if(j > 0 && invalid_matrix[i][j-1] != -1 && invalid_matrix[i][j-1] != cur_touch_id && matrix[i][j-1]) {
 		// In touch area or in fringe and decreasing
-		if (matrix[i][j-1] >= LARGE_AREA_UNPRESS && matrix[i][j-1] < matrix[i][j] + PINCH_THRESHOLD)
+		if (matrix[i][j-1] >= LARGE_AREA_UNPRESS)
 			determine_area_loc(isum, jsum, tweight, i, j-1, mini, maxi, minj, maxj, cur_touch_id, highest_val);
 		else if (matrix[i][j-1] >= LARGE_AREA_FRINGE && matrix[i][j-1] < matrix[i][j])
 			determine_area_loc_fringe(isum, jsum, tweight, i, j-1, cur_touch_id);
 	}
 	if(j < 39 && invalid_matrix[i][j+1] != -1 && invalid_matrix[i][j+1] != cur_touch_id && matrix[i][j+1]) {
 		// In touch area or in fringe and decreasing
-		if (matrix[i][j+1] >= LARGE_AREA_UNPRESS && matrix[i][j+1] < matrix[i][j] + PINCH_THRESHOLD)
+		if (matrix[i][j+1] >= LARGE_AREA_UNPRESS)
 			determine_area_loc(isum, jsum, tweight, i, j+1, mini, maxi, minj, maxj, cur_touch_id, highest_val);
 		else if (matrix[i][j+1] >= LARGE_AREA_FRINGE && matrix[i][j+1] < matrix[i][j])
 			determine_area_loc_fringe(isum, jsum, tweight, i, j+1, cur_touch_id);
@@ -480,6 +478,8 @@ int calc_point(void)
 					if(j < Y_AXIS_MINUS1 && matrix[i][j+1] > matrix[i][j])
 						do_continue = 1;
 					if(i > 0 && j > 0 && matrix[i-1][j-1] > matrix[i][j])
+						do_continue = 1;
+					if(i < X_AXIS_MINUS1 && j > 0 && matrix[i-1][j-1] > matrix[i][j])
 						do_continue = 1;
 					if(i < X_AXIS_MINUS1 && j > 0 && matrix[i+1][j-1] > matrix[i][j])
 						do_continue = 1;
