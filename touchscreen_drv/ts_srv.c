@@ -92,7 +92,7 @@
 #define TOUCH_INITIAL_THRESHOLD 32
 // Previous touches that have already been reported will continue to be
 // reported so long as they stay above this threshold
-#define TOUCH_CONTINUE_THRESHOLD 20
+#define TOUCH_CONTINUE_THRESHOLD 16
 // New touches above this threshold but below TOUCH_INITIAL_THRESHOLD will not
 // be reported unless the touch continues to appear.  This is designed to
 // filter out brief, low threshold touches that may not be valid.
@@ -272,7 +272,6 @@ void liftoff_slot(int slot) {
 	// correctly.
 	send_uevent(uinput_fd, EV_ABS, ABS_MT_SLOT, slot);
 	send_uevent(uinput_fd, EV_ABS, ABS_MT_TRACKING_ID, -1);
-	send_uevent(uinput_fd, EV_SYN, SYN_MT_REPORT, 0);
 }
 #endif // USE_B_PROTOCOL
 
@@ -292,7 +291,9 @@ void liftoff(void)
 #if EVENT_DEBUG
 	printf("liftoff function\n");
 #endif
+#if !USE_B_PROTOCOL
 	send_uevent(uinput_fd, EV_SYN, SYN_MT_REPORT, 0);
+#endif
 	send_uevent(uinput_fd, EV_SYN, SYN_REPORT, 0);
 }
 
@@ -310,32 +311,60 @@ void determine_area_loc_fringe(float *isum, float *jsum, int *tweight, int i,
 	// Check the nearby points to see if they are above LARGE_AREA_FRINGE
 	// but still decreasing in value to ensure that they are part of the same
 	// touch and not a nearby, pinching finger.
-	if (i > 0  && invalid_matrix[i-1][j] != -1 &&
-		invalid_matrix[i-1][j] != cur_touch_id) {
+	if (i > 0 && invalid_matrix[i-1][j] != cur_touch_id)
+	{
 		if (matrix[i-1][j] >= LARGE_AREA_FRINGE &&
 			matrix[i-1][j] < matrix[i][j])
 			determine_area_loc_fringe(isum, jsum, tweight, i - 1, j,
 				cur_touch_id);
 	}
-	if(i < 29 && invalid_matrix[i+1][j] != -1 &&
-		invalid_matrix[i+1][j] != cur_touch_id) {
+	if (i < X_AXIS_MINUS1 && invalid_matrix[i+1][j] != cur_touch_id)
+	{
 		if (matrix[i+1][j] >= LARGE_AREA_FRINGE &&
 			matrix[i+1][j] < matrix[i][j])
 			determine_area_loc_fringe(isum, jsum, tweight, i + 1, j,
 				cur_touch_id);
 	}
-	if(j > 0 && invalid_matrix[i][j-1] != -1 &&
-		invalid_matrix[i][j-1] != cur_touch_id) {
+	if (j > 0 && invalid_matrix[i][j-1] != cur_touch_id) {
 		if (matrix[i][j-1] >= LARGE_AREA_FRINGE &&
 			matrix[i][j-1] < matrix[i][j])
-			determine_area_loc_fringe(isum, jsum, tweight, i, j-1,
+			determine_area_loc_fringe(isum, jsum, tweight, i, j - 1,
 				cur_touch_id);
 	}
-	if(j < 39 && invalid_matrix[i][j+1] != -1 &&
-		invalid_matrix[i][j+1] != cur_touch_id) {
+	if (j < Y_AXIS_MINUS1 && invalid_matrix[i][j+1] != cur_touch_id)
+	{
 		if (matrix[i][j+1] >= LARGE_AREA_FRINGE &&
 			matrix[i][j+1] < matrix[i][j])
-			determine_area_loc_fringe(isum, jsum, tweight, i, j+1,
+			determine_area_loc_fringe(isum, jsum, tweight, i, j + 1,
+				cur_touch_id);
+	}
+	if (i > 0 && j > 0 && invalid_matrix[i-1][j-1] != cur_touch_id)
+	{
+		if (matrix[i-1][j-1] >= LARGE_AREA_FRINGE &&
+			matrix[i-1][j-1] < matrix[i][j])
+			determine_area_loc_fringe(isum, jsum, tweight, i - 1, j - 1,
+				cur_touch_id);
+	}
+	if (i < X_AXIS_MINUS1 && j > 0 && invalid_matrix[i+1][j-1] != cur_touch_id)
+	{
+		if (matrix[i+1][j-1] >= LARGE_AREA_FRINGE &&
+			matrix[i+1][j-1] < matrix[i][j])
+			determine_area_loc_fringe(isum, jsum, tweight, i + 1, j - 1,
+				cur_touch_id);
+	}
+	if (j < Y_AXIS_MINUS1 && i > 0 && invalid_matrix[i+1][j+1] != cur_touch_id)
+	{
+		if (matrix[i-1][j+1] >= LARGE_AREA_FRINGE &&
+			matrix[i-1][j+1] < matrix[i][j])
+			determine_area_loc_fringe(isum, jsum, tweight, i - 1, j + 1,
+				cur_touch_id);
+	}
+	if (j < Y_AXIS_MINUS1 && i < X_AXIS_MINUS1 &&
+		invalid_matrix[i+1][j+1] != cur_touch_id)
+	{
+		if (matrix[i+1][j+1] >= LARGE_AREA_FRINGE &&
+			matrix[i+1][j+1] < matrix[i][j])
+			determine_area_loc_fringe(isum, jsum, tweight, i + 1, j + 1,
 				cur_touch_id);
 	}
 }
@@ -371,8 +400,8 @@ void determine_area_loc(float *isum, float *jsum, int *tweight, int i, int j,
 	// or if they are above LARGE_AREA_FRINGE but the next nearby point is
 	// decreasing in value.  If the value is not decreasing and below
 	// LARGE_AREA_UNPRESS then we have 2 fingers pinched close together.
-	if (i > 0  && invalid_matrix[i-1][j] != -1 &&
-		invalid_matrix[i-1][j] != cur_touch_id && matrix[i-1][j]) {
+	if (i > 0 && invalid_matrix[i-1][j] != cur_touch_id)
+	{
 		if (matrix[i-1][j] >= LARGE_AREA_UNPRESS)
 			determine_area_loc(isum, jsum, tweight, i - 1, j, mini, maxi, minj,
 			maxj, cur_touch_id, highest_val);
@@ -381,8 +410,8 @@ void determine_area_loc(float *isum, float *jsum, int *tweight, int i, int j,
 			determine_area_loc_fringe(isum, jsum, tweight, i - 1, j,
 				cur_touch_id);
 	}
-	if (i < 29 && invalid_matrix[i+1][j] != -1 &&
-		invalid_matrix[i+1][j] != cur_touch_id && matrix[i+1][j]) {
+	if (i < X_AXIS_MINUS1 && invalid_matrix[i+1][j] != cur_touch_id)
+	{
 		if (matrix[i+1][j] >= LARGE_AREA_UNPRESS)
 			determine_area_loc(isum, jsum, tweight, i + 1, j, mini, maxi, minj,
 			maxj, cur_touch_id, highest_val);
@@ -391,24 +420,65 @@ void determine_area_loc(float *isum, float *jsum, int *tweight, int i, int j,
 			determine_area_loc_fringe(isum, jsum, tweight, i + 1, j,
 				cur_touch_id);
 	}
-	if (j > 0 && invalid_matrix[i][j-1] != -1 &&
-		invalid_matrix[i][j-1] != cur_touch_id && matrix[i][j-1]) {
+	if (j > 0 && invalid_matrix[i][j-1] != cur_touch_id)
+	{
 		if (matrix[i][j-1] >= LARGE_AREA_UNPRESS)
-			determine_area_loc(isum, jsum, tweight, i, j-1, mini, maxi, minj,
+			determine_area_loc(isum, jsum, tweight, i, j - 1, mini, maxi, minj,
 				maxj, cur_touch_id, highest_val);
 		else if (matrix[i][j-1] >= LARGE_AREA_FRINGE &&
 			matrix[i][j-1] < matrix[i][j])
-			determine_area_loc_fringe(isum, jsum, tweight, i, j-1,
+			determine_area_loc_fringe(isum, jsum, tweight, i, j - 1,
 				cur_touch_id);
 	}
-	if (j < 39 && invalid_matrix[i][j+1] != -1 &&
-		invalid_matrix[i][j+1] != cur_touch_id && matrix[i][j+1]) {
+	if (j < Y_AXIS_MINUS1 && invalid_matrix[i][j+1] != cur_touch_id)
+	{
 		if (matrix[i][j+1] >= LARGE_AREA_UNPRESS)
-			determine_area_loc(isum, jsum, tweight, i, j+1, mini, maxi, minj,
+			determine_area_loc(isum, jsum, tweight, i, j + 1, mini, maxi, minj,
 				maxj, cur_touch_id, highest_val);
 		else if (matrix[i][j+1] >= LARGE_AREA_FRINGE &&
 			matrix[i][j+1] < matrix[i][j])
-			determine_area_loc_fringe(isum, jsum, tweight, i, j+1,
+			determine_area_loc_fringe(isum, jsum, tweight, i, j + 1,
+				cur_touch_id);
+	}
+	if (i > 0 && j > 0 && invalid_matrix[i-1][j-1] != cur_touch_id)
+	{
+		if (matrix[i-1][j-1] >= LARGE_AREA_UNPRESS)
+			determine_area_loc(isum, jsum, tweight, i - 1, j - 1, mini, maxi,
+				minj, maxj, cur_touch_id, highest_val);
+		else if (matrix[i-1][j-1] >= LARGE_AREA_FRINGE &&
+			matrix[i-1][j-1] < matrix[i][j])
+			determine_area_loc_fringe(isum, jsum, tweight, i - 1, j - 1,
+				cur_touch_id);
+	}
+	if (i < X_AXIS_MINUS1 && j > 0 && invalid_matrix[i+1][j-1] != cur_touch_id)
+	{
+		if (matrix[i+1][j-1] >= LARGE_AREA_UNPRESS)
+			determine_area_loc(isum, jsum, tweight, i + 1, j - 1, mini, maxi,
+				minj, maxj, cur_touch_id, highest_val);
+		else if (matrix[i+1][j-1] >= LARGE_AREA_FRINGE &&
+			matrix[i+1][j-1] < matrix[i][j])
+			determine_area_loc_fringe(isum, jsum, tweight, i + 1, j - 1,
+				cur_touch_id);
+	}
+	if (j < Y_AXIS_MINUS1 && i > 0 && invalid_matrix[i-1][j+1] != cur_touch_id)
+	{
+		if (matrix[i-1][j+1] >= LARGE_AREA_UNPRESS)
+			determine_area_loc(isum, jsum, tweight, i - 1, j + 1, mini, maxi,
+				minj, maxj, cur_touch_id, highest_val);
+		else if (matrix[i-1][j+1] >= LARGE_AREA_FRINGE &&
+			matrix[i-1][j+1] < matrix[i][j])
+			determine_area_loc_fringe(isum, jsum, tweight, i - 1, j + 1,
+				cur_touch_id);
+	}
+	if (j < Y_AXIS_MINUS1 && i < X_AXIS_MINUS1 &&
+		invalid_matrix[i+1][j+1] != cur_touch_id)
+	{
+		if (matrix[i+1][j+1] >= LARGE_AREA_UNPRESS)
+			determine_area_loc(isum, jsum, tweight, i + 1, j + 1, mini, maxi,
+				minj, maxj, cur_touch_id, highest_val);
+		else if (matrix[i+1][j+1] >= LARGE_AREA_FRINGE &&
+			matrix[i+1][j+1] < matrix[i][j])
+			determine_area_loc_fringe(isum, jsum, tweight, i + 1, j + 1,
 				cur_touch_id);
 	}
 }
@@ -501,39 +571,6 @@ int calc_point(void)
 			if (tpc < MAX_TOUCH) {
 				if (matrix[i][j] > TOUCH_CONTINUE_THRESHOLD &&
 					!invalid_matrix[i][j]) {
-					// This is a large area press (e.g. the side of your thumb)
-					// so we will scan all the points nearby and if they are
-					// above the LARGE_AREA_UNPRESS we mark them invalid and
-					// track the highest i,j location so that we can
-					// calculate a "center" for the large area press.
-
-					// Scan nearby points to ensure that this point is the
-					// local maximum.
-					int do_continue = 0;
-					if (i > 0  && matrix[i-1][j] > matrix[i][j])
-						do_continue = 1;
-					if (i < X_AXIS_MINUS1 && matrix[i+1][j] > matrix[i][j])
-						do_continue = 1;
-					if (j > 0  && matrix[i][j-1] > matrix[i][j])
-						do_continue = 1;
-					if (j < Y_AXIS_MINUS1 && matrix[i][j+1] > matrix[i][j])
-						do_continue = 1;
-					if (i > 0 && j > 0 && matrix[i-1][j-1] > matrix[i][j])
-						do_continue = 1;
-					if (i < X_AXIS_MINUS1 && j > 0 &&
-						matrix[i-1][j-1] > matrix[i][j])
-						do_continue = 1;
-					if (i < X_AXIS_MINUS1 && j > 0 &&
-						matrix[i+1][j-1] > matrix[i][j])
-						do_continue = 1;
-					if (i > 0  && j < Y_AXIS_MINUS1 &&
-						matrix[i-1][j+1] > matrix[i][j])
-						do_continue = 1;
-					if (i < X_AXIS_MINUS1 && j < Y_AXIS_MINUS1 &&
-						matrix[i+1][j+1] > matrix[i][j])
-						do_continue = 1;
-					if (do_continue)
-						continue;
 
 					isum = 0;
 					jsum = 0;
@@ -808,7 +845,9 @@ int calc_point(void)
 				tpoint[k].touch_major);
 			send_uevent(uinput_fd, EV_ABS, ABS_MT_POSITION_X, tpoint[k].x);
 			send_uevent(uinput_fd, EV_ABS, ABS_MT_POSITION_Y, tpoint[k].y);
+#if !USE_B_PROTOCOL
 			send_uevent(uinput_fd, EV_SYN, SYN_MT_REPORT, 0);
+#endif
 		} else if (tpoint[k].touch_delay) {
 			// This touch didn't meet the threshold so we don't report it yet
 			tpoint[k].touch_delay--;
