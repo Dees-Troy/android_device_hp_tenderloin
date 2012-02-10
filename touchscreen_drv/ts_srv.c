@@ -358,7 +358,7 @@ void determine_area_loc_fringe(float *isum, float *jsum, int *tweight, int i,
 			determine_area_loc_fringe(isum, jsum, tweight, i + 1, j - 1,
 				cur_touch_id);
 	}
-	if (j < Y_AXIS_MINUS1 && i > 0 && invalid_matrix[i+1][j+1] != cur_touch_id)
+	if (j < Y_AXIS_MINUS1 && i > 0 && invalid_matrix[i-1][j+1] != cur_touch_id)
 	{
 		if (matrix[i-1][j+1] >= LARGE_AREA_FRINGE &&
 			matrix[i-1][j+1] < matrix[i][j])
@@ -779,7 +779,6 @@ int calc_point(void)
 						printf("lifting unused slot %i & reassigning it\n", j);
 #endif
 						liftoff_slot(j);
-						slot_in_use[j] = 1;
 					}
 					tpoint[i].slot = j;
 					slot_in_use[j] = 1;
@@ -868,7 +867,7 @@ int calc_point(void)
 		send_uevent(uinput_fd, EV_SYN, SYN_REPORT, 0);
 	}
 	previoustpc = tpc; // Store the touch count for the next run
-	if (tracking_id > 1000)
+	if (tracking_id >  2147483000)
 		tracking_id = 0; // Reset tracking ID counter if it gets too big
 	return tpc; // Return the touch count
 }
