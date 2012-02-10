@@ -152,13 +152,6 @@
 #define X_RESOLUTION_MINUS1 X_RESOLUTION - 1
 #define Y_RESOLUTION_MINUS1 Y_RESOLUTION - 1
 
-struct candidate {
-	int pw;
-	float touch_major;
-	int i;
-	int j;
-};
-
 struct touchpoint {
 	int pw;
 	float i;
