@@ -92,7 +92,7 @@
 #define TOUCH_INITIAL_THRESHOLD 32
 // Previous touches that have already been reported will continue to be
 // reported so long as they stay above this threshold
-#define TOUCH_CONTINUE_THRESHOLD 16
+#define TOUCH_CONTINUE_THRESHOLD 20
 // New touches above this threshold but below TOUCH_INITIAL_THRESHOLD will not
 // be reported unless the touch continues to appear.  This is designed to
 // filter out brief, low threshold touches that may not be valid.
@@ -100,7 +100,7 @@
 // Delay before a touch above TOUCH_DELAY_THRESHOLD but below
 // TOUCH_INITIAL_THRESHOLD will be reported.  We will wait and see if this
 // touch continues to show up in future buffers before reporting the event.
-#define TOUCH_DELAY 1
+#define TOUCH_DELAY 2
 // Threshold for end of a large area. This value needs to be set low enough
 // to filter out large touch areas and tends to be related to other touch
 // thresholds.
@@ -119,8 +119,9 @@
 #define PIXELS_PER_POINT 25
 
 // This enables slots for the type B multi-touch protocol.
-// The kernel must support slots (ABS_MT_SLOT). The TouchPad doesn't seem to
-// handle liftoffs with protocol B properly so leave it off for now.
+// The kernel must support slots (ABS_MT_SLOT). The TouchPad 2.6.35 kernel
+// doesn't seem to handle liftoffs with protocol B properly so leave it off
+// for now.
 #define USE_B_PROTOCOL 0
 
 /** ------- end of user modifiable parameters ---- */
@@ -133,11 +134,23 @@
 
 #define X_AXIS_POINTS  30
 #define Y_AXIS_POINTS  40
-#define X_RESOLUTION  768
-#define Y_RESOLUTION 1024
-
 #define X_AXIS_MINUS1 X_AXIS_POINTS - 1 // 29
 #define Y_AXIS_MINUS1 Y_AXIS_POINTS - 1 // 39
+
+#if USERSPACE_270_ROTATE
+#define X_RESOLUTION  768
+#define Y_RESOLUTION 1024
+#define X_LOCATION_VALUE ((float)X_RESOLUTION) / ((float)X_AXIS_MINUS1)
+#define Y_LOCATION_VALUE ((float)Y_RESOLUTION) / ((float)Y_AXIS_MINUS1)
+#else
+#define X_RESOLUTION 1024
+#define Y_RESOLUTION  768
+#define X_LOCATION_VALUE ((float)X_RESOLUTION) / ((float)Y_AXIS_MINUS1)
+#define Y_LOCATION_VALUE ((float)Y_RESOLUTION) / ((float)X_AXIS_MINUS1)
+#endif // USERSPACE_270_ROTATE
+
+#define X_RESOLUTION_MINUS1 X_RESOLUTION - 1
+#define Y_RESOLUTION_MINUS1 Y_RESOLUTION - 1
 
 struct candidate {
 	int pw;
@@ -268,8 +281,8 @@ void liftoff_slot(int slot) {
 	printf("liftoff slot function, lifting off slot: %i\n", slot);
 #endif
 	// According to the Linux kernel documentation, this is the right events
-	// to send for protocol B, but the TouchPad doesn't seem to handle them
-	// correctly.
+	// to send for protocol B, but the TouchPad 2.6.35 kernel doesn't seem to
+	// handle them correctly.
 	send_uevent(uinput_fd, EV_ABS, ABS_MT_SLOT, slot);
 	send_uevent(uinput_fd, EV_ABS, ABS_MT_TRACKING_ID, -1);
 }
@@ -596,12 +609,21 @@ int calc_point(void)
 #endif
 					tpoint[tpc].prev_loc = -1;
 #if USERSPACE_270_ROTATE
-					tpoint[tpc].x = tpoint[tpc].i * 768 / 29;
-					tpoint[tpc].y = 1024 - tpoint[tpc].j * 1024 / 39;
+					tpoint[tpc].x = tpoint[tpc].i * X_LOCATION_VALUE;
+					tpoint[tpc].y = Y_RESOLUTION_MINUS1 - tpoint[tpc].j *
+						Y_LOCATION_VALUE;
 #else
-					tpoint[tpc].x = 1024 - tpoint[tpc].j * 1024 / 39;
-					tpoint[tpc].y = 768 - tpoint[tpc].i * 768 / 29;
+					tpoint[tpc].x = X_RESOLUTION_MINUS1 - tpoint[tpc].j *
+						X_LOCATION_VALUE;
+					tpoint[tpc].y = Y_RESOLUTION_MINUS1 - tpoint[tpc].i *
+						Y_LOCATION_VALUE;
 #endif // USERSPACE_270_ROTATE
+					// It is possible for x and y to be negative with the math
+					// above so we force them to 0 if they are negative.
+					if (tpoint[tpc].x < 0)
+						tpoint[tpc].x = 0;
+					if (tpoint[tpc].y < 0)
+						tpoint[tpc].y = 0;
 					tpoint[tpc].raw_x = tpoint[tpc].x;
 					tpoint[tpc].raw_y = tpoint[tpc].y;
 					tpoint[tpc].isValid = highest_val;
@@ -629,7 +651,7 @@ int calc_point(void)
 	// Match up tracking IDs
 	{
 		int smallest_distance[MAX_TOUCH], cur_distance;
-		int deltax,deltay;
+		int deltax, deltay;
 		int smallest_distance_loc[MAX_TOUCH];
 		// Find closest points for each touch
 		for (i=0; i<tpc; i++) {
@@ -705,14 +727,10 @@ int calc_point(void)
 							prevtpoint[smallest_distance_loc[i]].y);
 #endif
 #if USE_B_PROTOCOL
-#if EVENT_DEBUG
+#if EVENT_DEBUG || MAX_DELTA_DEBUG
 						printf("sending max delta liftoff for slot: %i\n",
 							prevtpoint[smallest_distance_loc[i]].slot);
-#endif
-#if MAX_DELTA_DEBUG
-						printf("sending max delta liftoff for slot: %i\n",
-							prevtpoint[smallest_distance_loc[i]].slot);
-#endif
+#endif // EVENT_DEBUG || MAX_DELTA_DEBUG
 						liftoff_slot(prevtpoint[smallest_distance_loc[i]].slot);
 #endif // USE_B_PROTOCOL
 						process_new_tpoint(&tpoint[i], &tracking_id);
@@ -942,13 +960,8 @@ void open_uinput(void)
 	device.id.product = 1;
 	device.id.version = 1;
 
-#if USERSPACE_270_ROTATE
 	device.absmax[ABS_MT_POSITION_X] = X_RESOLUTION;
 	device.absmax[ABS_MT_POSITION_Y] = Y_RESOLUTION;
-#else
-	device.absmax[ABS_MT_POSITION_X] = Y_RESOLUTION;
-	device.absmax[ABS_MT_POSITION_Y] = X_RESOLUTION;
-#endif // USERSPACE_270_ROTATE
 	device.absmin[ABS_MT_POSITION_X] = 0;
 	device.absmin[ABS_MT_POSITION_Y] = 0;
 	device.absfuzz[ABS_MT_POSITION_X] = 2;
@@ -1074,10 +1087,8 @@ int main(int argc, char** argv)
 
 	ioctl(uart_fd, HSUART_IOCTL_FLUSH, 0x9);
 
-#if USE_B_PROTOCOL
-	memset(&slot_in_use, 0, sizeof slot_in_use);
-#endif
-
+	// Lift off in case of driver crash or in case the driver was shut off to
+	// save power by closing the uart.
 	liftoff();
 	clear_arrays();
 
