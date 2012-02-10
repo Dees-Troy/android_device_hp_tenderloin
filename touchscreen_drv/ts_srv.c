@@ -574,55 +574,53 @@ int calc_point(void)
 			else
 				printf("%2.2X ", matrix[i][j]);
 #endif
-			if (tpc < MAX_TOUCH) {
-				if (matrix[i][j] > TOUCH_CONTINUE_THRESHOLD &&
-					!invalid_matrix[i][j]) {
+			if (tpc < MAX_TOUCH && matrix[i][j] > TOUCH_CONTINUE_THRESHOLD &&
+				!invalid_matrix[i][j]) {
 
-					isum = 0;
-					jsum = 0;
-					tweight = 0;
-					int mini = i, maxi = i, minj = j, maxj = j;
-					int highest_val = matrix[i][j];
-					determine_area_loc(&isum, &jsum, &tweight, i, j, &mini,
-						&maxi, &minj, &maxj, tpc + 1, &highest_val);
+				isum = 0;
+				jsum = 0;
+				tweight = 0;
+				int mini = i, maxi = i, minj = j, maxj = j;
+				int highest_val = matrix[i][j];
+				determine_area_loc(&isum, &jsum, &tweight, i, j, &mini,
+					&maxi, &minj, &maxj, tpc + 1, &highest_val);
 
-					avgi = isum / (float)tweight;
-					avgj = jsum / (float)tweight;
-					maxi = maxi - mini;
-					maxj = maxj - minj;
+				avgi = isum / (float)tweight;
+				avgj = jsum / (float)tweight;
+				maxi = maxi - mini;
+				maxj = maxj - minj;
 
-					tpoint[tpc].pw = tweight;
-					tpoint[tpc].i = avgi;
-					tpoint[tpc].j = avgj;
-					tpoint[tpc].touch_major = MAX(maxi, maxj) *
-						PIXELS_PER_POINT;
-					tpoint[tpc].tracking_id = -1;
+				tpoint[tpc].pw = tweight;
+				tpoint[tpc].i = avgi;
+				tpoint[tpc].j = avgj;
+				tpoint[tpc].touch_major = MAX(maxi, maxj) *
+					PIXELS_PER_POINT;
+				tpoint[tpc].tracking_id = -1;
 #if USE_B_PROTOCOL
-					tpoint[tpc].slot = -1;
+				tpoint[tpc].slot = -1;
 #endif
-					tpoint[tpc].prev_loc = -1;
+				tpoint[tpc].prev_loc = -1;
 #if USERSPACE_270_ROTATE
-					tpoint[tpc].x = tpoint[tpc].i * X_LOCATION_VALUE;
-					tpoint[tpc].y = Y_RESOLUTION_MINUS1 - tpoint[tpc].j *
-						Y_LOCATION_VALUE;
+				tpoint[tpc].x = tpoint[tpc].i * X_LOCATION_VALUE;
+				tpoint[tpc].y = Y_RESOLUTION_MINUS1 - tpoint[tpc].j *
+					Y_LOCATION_VALUE;
 #else
-					tpoint[tpc].x = X_RESOLUTION_MINUS1 - tpoint[tpc].j *
-						X_LOCATION_VALUE;
-					tpoint[tpc].y = Y_RESOLUTION_MINUS1 - tpoint[tpc].i *
-						Y_LOCATION_VALUE;
+				tpoint[tpc].x = X_RESOLUTION_MINUS1 - tpoint[tpc].j *
+					X_LOCATION_VALUE;
+				tpoint[tpc].y = Y_RESOLUTION_MINUS1 - tpoint[tpc].i *
+					Y_LOCATION_VALUE;
 #endif // USERSPACE_270_ROTATE
-					// It is possible for x and y to be negative with the math
-					// above so we force them to 0 if they are negative.
-					if (tpoint[tpc].x < 0)
-						tpoint[tpc].x = 0;
-					if (tpoint[tpc].y < 0)
-						tpoint[tpc].y = 0;
-					tpoint[tpc].raw_x = tpoint[tpc].x;
-					tpoint[tpc].raw_y = tpoint[tpc].y;
-					tpoint[tpc].isValid = highest_val;
-					tpoint[tpc].touch_delay = 0;
-					tpc++;
-				}
+				// It is possible for x and y to be negative with the math
+				// above so we force them to 0 if they are negative.
+				if (tpoint[tpc].x < 0)
+					tpoint[tpc].x = 0;
+				if (tpoint[tpc].y < 0)
+					tpoint[tpc].y = 0;
+				tpoint[tpc].raw_x = tpoint[tpc].x;
+				tpoint[tpc].raw_y = tpoint[tpc].y;
+				tpoint[tpc].isValid = highest_val;
+				tpoint[tpc].touch_delay = 0;
+				tpc++;
 			}
 		}
 #if RAW_DATA_DEBUG
