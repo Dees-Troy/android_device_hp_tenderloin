@@ -105,7 +105,7 @@
 // to filter out large touch areas and tends to be related to other touch
 // thresholds.
 #define LARGE_AREA_UNPRESS 22 //TOUCH_CONTINUE_THRESHOLD
-#define LARGE_AREA_FRINGE 15 // Threshold for large area fringe
+#define LARGE_AREA_FRINGE 5 // Threshold for large area fringe
 
 // Enables filtering of a single touch to make it easier to long press.
 // Keeps the initial touch point the same so long as it stays within
@@ -153,24 +153,37 @@
 #define Y_RESOLUTION_MINUS1 Y_RESOLUTION - 1
 
 struct touchpoint {
+	// Power or weight of the touch, used for calculating the center point.
 	int pw;
+	// These store the average of the locations in the digitizer matrix that
+	// make up the touch.  Used for calculating the center point.
 	float i;
 	float j;
 #if USE_B_PROTOCOL
+	// Slot used for the B protocol touch events.
 	int slot;
 #endif
+	// Tracking ID that is assigned to this touch.
 	int tracking_id;
+	// Index location of this touch in the previous set of touches.
 	int prev_loc;
 #if MAX_DELTA_FILTER
+	// Direction and distance between this touch and the previous touch.
 	float direction;
 	int distance;
 #endif
+	// Size of the touch area.
 	int touch_major;
+	// X and Y locations of the touch.  These values may have been changed by a
+	// filter.
 	int x;
 	int y;
+	// Unfiltered location of the touch.
 	int unfiltered_x;
 	int unfiltered_y;
+	// The highest value found in the digitizer matrix of this touch area.
 	int highest_val;
+	// Delay count for touches that do not have a very high highest_val.
 	int touch_delay;
 };
 
@@ -180,12 +193,18 @@ struct touchpoint tp[3][MAX_TOUCH];
 // These indexes locate the appropriate set of touches in tp
 int tpoint, prevtpoint, prev2tpoint;
 
+// Used for reading data from the digitizer
 unsigned char cline[64];
+// Index used for cline
 unsigned int cidx = 0;
+// Contains all of the data from the digitizer
 unsigned char matrix[X_AXIS_POINTS][Y_AXIS_POINTS];
+// Indicates if a point in the digitizer matrix has already been scanned.
 int invalid_matrix[X_AXIS_POINTS][Y_AXIS_POINTS];
+// File descriptor for uinput device
 int uinput_fd;
 #if USE_B_PROTOCOL
+// Indicates which slots are in use
 int slot_in_use[MAX_TOUCH];
 #endif
 
@@ -259,7 +278,7 @@ void avg_filter(struct touchpoint *t) {
 	int ysum = 4 * t->unfiltered_y + 2 *
 		tp[prevtpoint][t->prev_loc].unfiltered_y;
 	if(tp[prevtpoint][t->prev_loc].prev_loc > -1) {
-		xsum += 
+		xsum +=
 			tp[prev2tpoint][tp[prevtpoint][t->prev_loc].prev_loc].unfiltered_x;
 		ysum +=
 			tp[prev2tpoint][tp[prevtpoint][t->prev_loc].prev_loc].unfiltered_y;
@@ -275,7 +294,7 @@ void avg_filter(struct touchpoint *t) {
 
 #if USE_B_PROTOCOL
 void liftoff_slot(int slot) {
-	// sends a liftoff indicator for a specific slot
+	// Sends a liftoff indicator for a specific slot
 #if EVENT_DEBUG
 	printf("liftoff slot function, lifting off slot: %i\n", slot);
 #endif
@@ -535,7 +554,7 @@ int calc_point(void)
 			tpoint = 0;
 	}
 
-	// Generate list of high values
+	// Scan the digitizer data and generate a list of touches
 	memset(&invalid_matrix, 0, sizeof(invalid_matrix));
 	for(i=0; i < X_AXIS_POINTS; i++) {
 		for(j=0; j < Y_AXIS_POINTS; j++) {
