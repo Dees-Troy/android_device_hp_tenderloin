@@ -40,6 +40,8 @@
 #include <string.h>
 #include <math.h>
 #include <sys/select.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 #if 1
 // This is for Android
@@ -48,6 +50,8 @@
 // This is for webos and possibly other Linuxes
 #define UINPUT_LOCATION "/dev/input/uinput"
 #endif
+
+#define TS_SOCKET_LOCATION "/data/tsdriver"
 
 /* Set to 1 to print coordinates to stdout. */
 #define DEBUG 0
@@ -62,6 +66,8 @@
 #define EVENT_DEBUG 0
 // Set to 1 to enable tracking ID logging
 #define TRACK_ID_DEBUG 0
+// Set to 1 to enable socket debug information
+#define DEBUG_SOCKET 0
 
 #define AVG_FILTER 1
 
@@ -1024,10 +1030,24 @@ void clear_arrays(void)
 	}
 }
 
+void open_uart(int *uart_fd) {
+	struct hsuart_mode uart_mode;
+	*uart_fd = open("/dev/ctp_uart", O_RDONLY|O_NONBLOCK);
+	if(*uart_fd <= 0) {
+		printf("Could not open uart\n");
+		exit(0);
+	}
+
+	ioctl(*uart_fd, HSUART_IOCTL_GET_UARTMODE, &uart_mode);
+	uart_mode.speed = 0x3D0900;
+	ioctl(*uart_fd, HSUART_IOCTL_SET_UARTMODE, &uart_mode);
+
+	ioctl(*uart_fd, HSUART_IOCTL_FLUSH, 0x9);
+}
+
 int main(int argc, char** argv)
 {
-	struct hsuart_mode uart_mode;
-	int uart_fd, nbytes, need_liftoff = 0;
+	int uart_fd, nbytes, need_liftoff = 0, sel_ret, socket_fd;
 	unsigned char recv_buf[RECV_BUF_SIZE];
 	fd_set fdset;
 	struct timeval seltmout;
@@ -1040,33 +1060,55 @@ int main(int argc, char** argv)
 	if (sched_setscheduler(0 /* that's us */, SCHED_FIFO, &sparam))
 		perror("Cannot set RT priority, ignoring: ");
 
-	uart_fd = open("/dev/ctp_uart", O_RDONLY|O_NONBLOCK);
-	if(uart_fd<=0) {
-		printf("Could not open uart\n");
-		return 0;
-	}
+	open_uart(&uart_fd);
 
 	open_uinput();
-
-	ioctl(uart_fd,HSUART_IOCTL_GET_UARTMODE,&uart_mode);
-	uart_mode.speed = 0x3D0900;
-	ioctl(uart_fd, HSUART_IOCTL_SET_UARTMODE,&uart_mode);
-
-	ioctl(uart_fd, HSUART_IOCTL_FLUSH, 0x9);
 
 	// Lift off in case of driver crash or in case the driver was shut off to
 	// save power by closing the uart.
 	liftoff();
 	clear_arrays();
 
+	// Create / open socket for input from liblights
+	socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (socket_fd >= 0) {
+		struct sockaddr_un unaddr;
+		unaddr.sun_family = AF_UNIX;
+		strcpy(unaddr.sun_path, TS_SOCKET_LOCATION);
+		unlink(unaddr.sun_path);
+		int len, bind_fd;
+		len = strlen(unaddr.sun_path) + sizeof(unaddr.sun_family);
+		bind_fd = bind(socket_fd, (struct sockaddr *)&unaddr, len);
+		if (bind_fd >= 0) {
+			int listen_fd;
+			listen_fd = listen(socket_fd, 3);
+#if DEBUG_SOCKET
+			if (listen_fd < 0)
+				printf("Error listening to socket\n");
+#endif
+		}
+#if DEBUG_SOCKET
+		else
+			printf("Error binding socket\n");
+#endif
+	}
+#if DEBUG_SOCKET
+	else
+		printf("Error creating socket\n");
+#endif
+
 	while(1) {
 		FD_ZERO(&fdset);
-		FD_SET(uart_fd, &fdset);
+		if (uart_fd >= 0)
+			FD_SET(uart_fd, &fdset);
+		if (socket_fd >= 0)
+			FD_SET(socket_fd, &fdset);
 		seltmout.tv_sec = 0;
 		/* 2x tmout */
 		seltmout.tv_usec = LIFTOFF_TIMEOUT;
 
-		if (0 == select(uart_fd + 1, &fdset, NULL, NULL, &seltmout)) {
+		sel_ret = select(MAX(uart_fd, socket_fd) + 1, &fdset, NULL, NULL, &seltmout);
+		if (sel_ret == 0) {
 			/* Timeout means liftoff, send event */
 #if DEBUG
 			printf("timeout! sending liftoff\n");
@@ -1082,37 +1124,82 @@ int main(int argc, char** argv)
 			}
 
 			FD_ZERO(&fdset);
-			FD_SET(uart_fd, &fdset);
-			/* Now enter indefinite sleep iuntil input appears */
-			select(uart_fd + 1, &fdset, NULL, NULL, NULL);
+			if (uart_fd >= 0)
+				FD_SET(uart_fd, &fdset);
+			if (socket_fd >= 0)
+				FD_SET(socket_fd, &fdset);
+			/* Now enter indefinite sleep until input appears */
+			select(MAX(uart_fd, socket_fd) + 1, &fdset, NULL, NULL, NULL);
 			/* In case we were wrongly woken up check the event
 			 * count again */
 			continue;
 		}
-			
-		nbytes = read(uart_fd, recv_buf, RECV_BUF_SIZE);
-		
-		if(nbytes <= 0)
-			continue;
+
+		if (uart_fd >= 0 && FD_ISSET(uart_fd, &fdset)) {
+			// This is touch data from the uart
+			nbytes = read(uart_fd, recv_buf, RECV_BUF_SIZE);
+
+			if(nbytes <= 0)
+				continue;
 #if DEBUG
-		printf("Received %d bytes\n", nbytes);
-		int i;
-		for(i=0; i < nbytes; i++)
-			printf("%2.2X ",recv_buf[i]);
-		printf("\n");
+			printf("Received %d bytes\n", nbytes);
+			int i;
+			for(i=0; i < nbytes; i++)
+				printf("%2.2X ",recv_buf[i]);
+			printf("\n");
 #endif
-		if (!snarf2(recv_buf,nbytes)) {
-			// Sometimes there is data, but no valid touches due to threshold
-			if (need_liftoff) {
+			if (!snarf2(recv_buf,nbytes)) {
+				// Sometimes there is data, but no valid touches due to threshold
+				if (need_liftoff) {
 #if EVENT_DEBUG
-				printf("snarf2 called liftoff\n");
+					printf("snarf2 called liftoff\n");
 #endif
-				liftoff();
-				clear_arrays();
-				need_liftoff = 0;
+					liftoff();
+					clear_arrays();
+					need_liftoff = 0;
+				}
+			} else
+				need_liftoff = 1;
+		}
+
+		if (socket_fd >= 0 && FD_ISSET(socket_fd, &fdset)) {
+			// This is data from the socket
+			int accept_fd;
+			accept_fd = accept(socket_fd, NULL, NULL);
+			if (accept_fd >= 0) {
+				char recv_str[100];
+				int recv_ret;
+				recv_ret = recv(accept_fd, recv_str, 100, 0);
+				if (recv_ret > 0) {
+#if DEBUG_SOCKET
+					printf("Socket received %i byte(s): '%s'\n", recv_ret, recv_str);
+#endif
+					if (recv_str[0] == 67 /* 'C' */ && uart_fd >= 0) {
+						recv_ret = close(uart_fd);
+						uart_fd = -1;
+#if DEBUG_SOCKET
+						printf("uart closed: %i\n", recv_ret);
+#endif
+					}
+					if (recv_str[0] == 79 /* 'O' */ && uart_fd < 0) {
+						open_uart(&uart_fd);
+#if DEBUG_SOCKET
+						printf("uart opened at %i\n", uart_fd);
+#endif
+					}
+				}
+#if DEBUG_SOCKET
+				else {
+					if (recv_ret < 0)
+						printf("Receive error\n");
+					else
+						printf("No actual data to receive\n");
+				}
+			} else {
+				printf("Accept failed\n");
+#endif
 			}
-		} else
-			need_liftoff = 1;
+		}
 	}
 
 	return 0;
