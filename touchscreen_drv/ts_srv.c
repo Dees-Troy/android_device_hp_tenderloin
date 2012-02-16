@@ -126,7 +126,7 @@ int touch_delay_count = TOUCH_DELAY;
 #define TOUCH_INITIAL_THRESHOLD_S  32
 #define TOUCH_CONTINUE_THRESHOLD_S 16
 #define TOUCH_DELAY_THRESHOLD_S    24
-#define TOUCH_DELAY_S               5
+#define TOUCH_DELAY_S               2
 
 // Enables filtering of a single touch to make it easier to long press.
 // Keeps the initial touch point the same so long as it stays within
