@@ -45,7 +45,7 @@ char const *const LED_FILE = "/dev/lm8502";
 #define LM8502_STOP_ENGINE              3
 #define LM8502_WAIT_FOR_ENGINE_STOPPED  8
 
-#define TS_SOCKET_LOCATION "/data/tsdriver"
+#define TS_SOCKET_LOCATION "/dev/socket/tsdriver"
 
 /* LED engine programs */
 static const uint16_t notif_led_program_pulse[] = {

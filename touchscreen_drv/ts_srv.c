@@ -51,7 +51,13 @@
 #define UINPUT_LOCATION "/dev/input/uinput"
 #endif
 
-#define TS_SOCKET_LOCATION "/data/tsdriver"
+#define TS_SOCKET_LOCATION "/dev/socket/tsdriver"
+// Set to 1 to enable socket debug information
+#define DEBUG_SOCKET 0
+
+#define TS_SETTINGS_FILE "/data/tssettings"
+// Set to 1 to enable settings file debug information
+#define TS_SETTINGS_DEBUG 0
 
 /* Set to 1 to print coordinates to stdout. */
 #define DEBUG 0
@@ -66,8 +72,6 @@
 #define EVENT_DEBUG 0
 // Set to 1 to enable tracking ID logging
 #define TRACK_ID_DEBUG 0
-// Set to 1 to enable socket debug information
-#define DEBUG_SOCKET 0
 
 #define AVG_FILTER 1
 
@@ -75,6 +79,7 @@
 
 #define RECV_BUF_SIZE 1540
 #define LIFTOFF_TIMEOUT 25000
+#define SOCKET_BUFFER_SIZE 10
 
 #define MAX_TOUCH 10 // Max touches that will be reported
 
@@ -96,22 +101,32 @@
 
 // Any touch above this threshold is immediately reported to the system
 #define TOUCH_INITIAL_THRESHOLD 32
+int touch_initial_thresh = TOUCH_INITIAL_THRESHOLD;
 // Previous touches that have already been reported will continue to be
 // reported so long as they stay above this threshold
 #define TOUCH_CONTINUE_THRESHOLD 26
+int touch_continue_thresh = TOUCH_CONTINUE_THRESHOLD;
 // New touches above this threshold but below TOUCH_INITIAL_THRESHOLD will not
 // be reported unless the touch continues to appear.  This is designed to
 // filter out brief, low threshold touches that may not be valid.
 #define TOUCH_DELAY_THRESHOLD 28
+int touch_delay_thresh = TOUCH_DELAY_THRESHOLD;
 // Delay before a touch above TOUCH_DELAY_THRESHOLD but below
 // TOUCH_INITIAL_THRESHOLD will be reported.  We will wait and see if this
 // touch continues to show up in future buffers before reporting the event.
 #define TOUCH_DELAY 5
+int touch_delay_count = TOUCH_DELAY;
 // Threshold for end of a large area. This value needs to be set low enough
 // to filter out large touch areas and tends to be related to other touch
 // thresholds.
 #define LARGE_AREA_UNPRESS 22 //TOUCH_CONTINUE_THRESHOLD
 #define LARGE_AREA_FRINGE 5 // Threshold for large area fringe
+
+// These are stylus thresholds:
+#define TOUCH_INITIAL_THRESHOLD_S  32
+#define TOUCH_CONTINUE_THRESHOLD_S 16
+#define TOUCH_DELAY_THRESHOLD_S    24
+#define TOUCH_DELAY_S               5
 
 // Enables filtering of a single touch to make it easier to long press.
 // Keeps the initial touch point the same so long as it stays within
@@ -522,11 +537,11 @@ void determine_area_loc(float *isum, float *jsum, int *tweight, int i, int j,
 
 void process_new_tpoint(struct touchpoint *t, int *tracking_id) {
 	// Handles setting up a brand new touch point
-	if (t->highest_val > TOUCH_DELAY_THRESHOLD) {
+	if (t->highest_val > touch_delay_thresh) {
 		t->tracking_id = *tracking_id;
 		*tracking_id += 1;
-		if (t->highest_val <= TOUCH_INITIAL_THRESHOLD)
-			t->touch_delay = TOUCH_DELAY;
+		if (t->highest_val <= touch_initial_thresh)
+			t->touch_delay = touch_delay_count;
 	} else {
 		t->highest_val = 0;
 	}
@@ -570,7 +585,7 @@ int calc_point(void)
 			else
 				printf("%2.2X ", matrix[i][j]);
 #endif
-			if (tpc < MAX_TOUCH && matrix[i][j] > TOUCH_CONTINUE_THRESHOLD &&
+			if (tpc < MAX_TOUCH && matrix[i][j] > touch_continue_thresh &&
 				!invalid_matrix[i][j]) {
 
 				isum = 0;
@@ -1045,6 +1060,147 @@ void open_uart(int *uart_fd) {
 	ioctl(*uart_fd, HSUART_IOCTL_FLUSH, 0x9);
 }
 
+void create_ts_socket(int *socket_fd) {
+	// Create / open socket for input
+	*socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (*socket_fd >= 0) {
+		struct sockaddr_un unaddr;
+		unaddr.sun_family = AF_UNIX;
+		strcpy(unaddr.sun_path, TS_SOCKET_LOCATION);
+		unlink(unaddr.sun_path);
+		int len, bind_fd;
+		len = strlen(unaddr.sun_path) + sizeof(unaddr.sun_family);
+		bind_fd = bind(*socket_fd, (struct sockaddr *)&unaddr, len);
+		if (bind_fd >= 0) {
+			int listen_fd;
+			listen_fd = listen(*socket_fd, 3);
+#if DEBUG_SOCKET
+			if (listen_fd < 0)
+				printf("Error listening to socket\n");
+#endif
+		}
+#if DEBUG_SOCKET
+		else
+			printf("Error binding socket\n");
+#endif
+	}
+#if DEBUG_SOCKET
+	else
+		printf("Error creating socket\n");
+#endif
+}
+
+void set_ts_mode(int mode){
+	if (mode == 0) {
+		// Finger mode
+		touch_initial_thresh = TOUCH_INITIAL_THRESHOLD;
+		touch_continue_thresh = TOUCH_CONTINUE_THRESHOLD;
+		touch_delay_thresh = TOUCH_DELAY_THRESHOLD;
+		touch_delay_count = TOUCH_DELAY;
+	} else {
+		// Stylus mode
+		touch_initial_thresh = TOUCH_INITIAL_THRESHOLD_S;
+		touch_continue_thresh = TOUCH_CONTINUE_THRESHOLD_S;
+		touch_delay_thresh = TOUCH_DELAY_THRESHOLD_S;
+		touch_delay_count = TOUCH_DELAY_S;
+	}
+}
+
+void read_settings_file(void) {
+	// Check for and read the settings file.
+	// If the file isn't found, finger mode will be the default mode
+	FILE *fp;
+	int setting;
+
+	fp = fopen(TS_SETTINGS_FILE, "r");
+	if (fp == NULL) {
+#if TS_SETTINGS_DEBUG
+		printf("Unable to fopen settings file for reading\n");
+#endif
+		set_ts_mode(0);
+		return;
+	}
+	setting = fgetc(fp);
+	if (setting == EOF) {
+#if TS_SETTINGS_DEBUG
+		printf("fgetc == EOF: %i\n", setting);
+#endif
+		set_ts_mode(0);
+	} else if (setting == 0) {
+#if TS_SETTINGS_DEBUG
+		printf("setting is: %i so setting finger mode\n", setting);
+#endif
+		set_ts_mode(0);
+	} else if (setting == 1) {
+#if TS_SETTINGS_DEBUG
+		printf("setting is: %i so setting stylus mode\n", setting);
+#endif
+		set_ts_mode(1);
+	}
+	fclose(fp);
+}
+
+void write_settings_file(int setting) {
+	// Write to the settings file.
+	FILE *fp;
+	fp = fopen(TS_SETTINGS_FILE, "w");
+	if (fp == NULL) {
+#if TS_SETTINGS_DEBUG
+		printf("Unable to fopen settings file for writing\n");
+#endif
+		return;
+	}
+	setting = fputc(setting, fp);
+#if TS_SETTINGS_DEBUG
+	if (setting == EOF)
+		printf("fputc == EOF: %i\n", setting);
+	else
+		printf("Successfully wrote to setting %i to settings file\n", setting);
+#endif
+	fclose(fp);
+}
+
+void process_socket_buffer(char *buffer[], int buffer_len, int *uart_fd) {
+	// Processes data that is received from the socket
+	// O = open uart
+	// C = close uart
+	// F = finger mode
+	// S = stylus mode
+	int i, return_val, buf;
+
+	for (i=0; i<buffer_len; i++) {
+		buf = (int)*buffer;
+		if (buf == 67 /* 'C' */ && *uart_fd >= 0) {
+			return_val = close(*uart_fd);
+			*uart_fd = -1;
+#if DEBUG_SOCKET
+			printf("uart closed: %i\n", return_val);
+#endif
+		}
+		if (buf == 79 /* 'O' */ && *uart_fd < 0) {
+			open_uart(uart_fd);
+#if DEBUG_SOCKET
+			printf("uart opened at %i\n", *uart_fd);
+#endif
+		}
+		if (buf == 70 /* 'F' */) {
+			set_ts_mode(0);
+			write_settings_file(0);
+#if DEBUG_SOCKET
+			printf("finger mode set\n");
+#endif
+		}
+		if (buf == 83 /* 'S' */) {
+			set_ts_mode(1);
+			write_settings_file(1);
+#if DEBUG_SOCKET
+			printf("stylus mode set\n");
+#endif
+		}
+		buffer++;
+	}
+}
+
 int main(int argc, char** argv)
 {
 	int uart_fd, nbytes, need_liftoff = 0, sel_ret, socket_fd;
@@ -1064,38 +1220,14 @@ int main(int argc, char** argv)
 
 	open_uinput();
 
+	read_settings_file();
+
 	// Lift off in case of driver crash or in case the driver was shut off to
 	// save power by closing the uart.
 	liftoff();
 	clear_arrays();
 
-	// Create / open socket for input from liblights
-	socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-	if (socket_fd >= 0) {
-		struct sockaddr_un unaddr;
-		unaddr.sun_family = AF_UNIX;
-		strcpy(unaddr.sun_path, TS_SOCKET_LOCATION);
-		unlink(unaddr.sun_path);
-		int len, bind_fd;
-		len = strlen(unaddr.sun_path) + sizeof(unaddr.sun_family);
-		bind_fd = bind(socket_fd, (struct sockaddr *)&unaddr, len);
-		if (bind_fd >= 0) {
-			int listen_fd;
-			listen_fd = listen(socket_fd, 3);
-#if DEBUG_SOCKET
-			if (listen_fd < 0)
-				printf("Error listening to socket\n");
-#endif
-		}
-#if DEBUG_SOCKET
-		else
-			printf("Error binding socket\n");
-#endif
-	}
-#if DEBUG_SOCKET
-	else
-		printf("Error creating socket\n");
-#endif
+	create_ts_socket(&socket_fd);
 
 	while(1) {
 		FD_ZERO(&fdset);
@@ -1149,7 +1281,7 @@ int main(int argc, char** argv)
 			printf("\n");
 #endif
 			if (!snarf2(recv_buf,nbytes)) {
-				// Sometimes there is data, but no valid touches due to threshold
+				// Sometimes there's data but no valid touches due to threshold
 				if (need_liftoff) {
 #if EVENT_DEBUG
 					printf("snarf2 called liftoff\n");
@@ -1167,26 +1299,15 @@ int main(int argc, char** argv)
 			int accept_fd;
 			accept_fd = accept(socket_fd, NULL, NULL);
 			if (accept_fd >= 0) {
-				char recv_str[100];
+				char recv_str[SOCKET_BUFFER_SIZE];
 				int recv_ret;
-				recv_ret = recv(accept_fd, recv_str, 100, 0);
+				recv_ret = recv(accept_fd, recv_str, SOCKET_BUFFER_SIZE, 0);
 				if (recv_ret > 0) {
 #if DEBUG_SOCKET
-					printf("Socket received %i byte(s): '%s'\n", recv_ret, recv_str);
+					printf("Socket received %i byte(s): '%s'\n", recv_ret,
+						recv_str);
 #endif
-					if (recv_str[0] == 67 /* 'C' */ && uart_fd >= 0) {
-						recv_ret = close(uart_fd);
-						uart_fd = -1;
-#if DEBUG_SOCKET
-						printf("uart closed: %i\n", recv_ret);
-#endif
-					}
-					if (recv_str[0] == 79 /* 'O' */ && uart_fd < 0) {
-						open_uart(&uart_fd);
-#if DEBUG_SOCKET
-						printf("uart opened at %i\n", uart_fd);
-#endif
-					}
+					process_socket_buffer((char **)&recv_str, recv_ret, &uart_fd);
 				}
 #if DEBUG_SOCKET
 				else {
