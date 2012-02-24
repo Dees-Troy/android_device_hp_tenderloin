@@ -79,7 +79,7 @@
 
 #define RECV_BUF_SIZE 1540
 #define LIFTOFF_TIMEOUT 25000
-#define SOCKET_BUFFER_SIZE 10
+#define SOCKET_BUFFER_SIZE 1
 
 #define MAX_TOUCH 10 // Max touches that will be reported
 
@@ -292,12 +292,13 @@ int send_uevent(int fd, __u16 type, __u16 code, __s32 value)
 void avg_filter(struct touchpoint *t) {
 #if DEBUG
 	printf("before: x=%d, y=%d", t->x, t->y);
-#endif 
+#endif
 	float total_div = 6.0;
 	int xsum = 4 * t->unfiltered_x + 2 *
 		tp[prevtpoint][t->prev_loc].unfiltered_x;
 	int ysum = 4 * t->unfiltered_y + 2 *
 		tp[prevtpoint][t->prev_loc].unfiltered_y;
+
 	if(tp[prevtpoint][t->prev_loc].prev_loc > -1) {
 		xsum +=
 			tp[prev2tpoint][tp[prevtpoint][t->prev_loc].prev_loc].unfiltered_x;
@@ -351,11 +352,13 @@ void liftoff(void)
 
 void determine_area_loc_fringe(float *isum, float *jsum, int *tweight, int i,
 	int j, int cur_touch_id){
+	float powered;
+
 	// Set fringe point to used for this touch point
 	invalid_matrix[i][j] = cur_touch_id;
 
 	// Track touch values to help determine the pixel x, y location
-	float powered = pow(matrix[i][j], 1.5);
+	powered = pow(matrix[i][j], 1.5);
 	*tweight += powered;
 	*isum += powered * i;
 	*jsum += powered * j;
@@ -424,6 +427,8 @@ void determine_area_loc_fringe(float *isum, float *jsum, int *tweight, int i,
 void determine_area_loc(float *isum, float *jsum, int *tweight, int i, int j,
 	int *mini, int *maxi, int *minj, int *maxj, int cur_touch_id,
 	int *highest_val){
+	float powered;
+
 	// Invalidate this touch point so that we don't process it later
 	invalid_matrix[i][j] = cur_touch_id;
 
@@ -443,7 +448,7 @@ void determine_area_loc(float *isum, float *jsum, int *tweight, int i, int j,
 		*highest_val = matrix[i][j];
 
 	// Track touch values to help determine the pixel x, y location
-	float powered = pow(matrix[i][j], 1.5);
+	powered = pow(matrix[i][j], 1.5);
 	*tweight += powered;
 	*isum += powered * i;
 	*jsum += powered * j;
@@ -1106,11 +1111,11 @@ void set_ts_mode(int mode){
 	}
 }
 
-void read_settings_file(void) {
+int read_settings_file(void) {
 	// Check for and read the settings file.
 	// If the file isn't found, finger mode will be the default mode
 	FILE *fp;
-	int setting;
+	int setting, ret_val = 0;
 
 	fp = fopen(TS_SETTINGS_FILE, "r");
 	if (fp == NULL) {
@@ -1118,7 +1123,7 @@ void read_settings_file(void) {
 		printf("Unable to fopen settings file for reading\n");
 #endif
 		set_ts_mode(0);
-		return;
+		return 0;
 	}
 	setting = fgetc(fp);
 	if (setting == EOF) {
@@ -1126,18 +1131,22 @@ void read_settings_file(void) {
 		printf("fgetc == EOF: %i\n", setting);
 #endif
 		set_ts_mode(0);
+		ret_val = 0;
 	} else if (setting == 0) {
 #if TS_SETTINGS_DEBUG
 		printf("setting is: %i so setting finger mode\n", setting);
 #endif
 		set_ts_mode(0);
+		ret_val = 0;
 	} else if (setting == 1) {
 #if TS_SETTINGS_DEBUG
 		printf("setting is: %i so setting stylus mode\n", setting);
 #endif
 		set_ts_mode(1);
+		ret_val = 1;
 	}
 	fclose(fp);
+	return ret_val;
 }
 
 void write_settings_file(int setting) {
@@ -1160,12 +1169,14 @@ void write_settings_file(int setting) {
 	fclose(fp);
 }
 
-void process_socket_buffer(char *buffer[], int buffer_len, int *uart_fd) {
+void process_socket_buffer(char *buffer[], int buffer_len, int *uart_fd,
+	int accept_fd) {
 	// Processes data that is received from the socket
 	// O = open uart
 	// C = close uart
 	// F = finger mode
 	// S = stylus mode
+	// M = return current mode
 	int i, return_val, buf;
 
 	for (i=0; i<buffer_len; i++) {
@@ -1195,6 +1206,21 @@ void process_socket_buffer(char *buffer[], int buffer_len, int *uart_fd) {
 			write_settings_file(1);
 #if DEBUG_SOCKET
 			printf("stylus mode set\n");
+#endif
+		}
+		if (buf == 77 /* 'M' */) {
+			char current_mode[1];
+			int send_ret;
+
+			current_mode[0] = read_settings_file();
+			send_ret = send(accept_fd, (char*)current_mode,
+				sizeof(current_mode), 0);
+#if DEBUG_SOCKET
+			if (send_ret <= 0)
+				printf("Unable to send data to socket\n");
+			else
+				printf("Sent current mode of %i to socket\n",
+					(int)current_mode[0]);
 #endif
 		}
 		buffer++;
@@ -1239,11 +1265,12 @@ int main(int argc, char** argv)
 		/* 2x tmout */
 		seltmout.tv_usec = LIFTOFF_TIMEOUT;
 
-		sel_ret = select(MAX(uart_fd, socket_fd) + 1, &fdset, NULL, NULL, &seltmout);
+		sel_ret = select(MAX(uart_fd, socket_fd) + 1, &fdset, NULL, NULL,
+			&seltmout);
 		if (sel_ret == 0) {
-			/* Timeout means liftoff, send event */
+			/* Timeout means no more data and probably need to lift off */
 #if DEBUG
-			printf("timeout! sending liftoff\n");
+			printf("timeout! no data coming from uart\n");
 #endif
 
 			if (need_liftoff) {
@@ -1301,13 +1328,15 @@ int main(int argc, char** argv)
 			if (accept_fd >= 0) {
 				char recv_str[SOCKET_BUFFER_SIZE];
 				int recv_ret;
+
 				recv_ret = recv(accept_fd, recv_str, SOCKET_BUFFER_SIZE, 0);
 				if (recv_ret > 0) {
 #if DEBUG_SOCKET
 					printf("Socket received %i byte(s): '%s'\n", recv_ret,
 						recv_str);
 #endif
-					process_socket_buffer((char **)&recv_str, recv_ret, &uart_fd);
+					process_socket_buffer((char **)&recv_str, recv_ret,
+						&uart_fd, accept_fd);
 				}
 #if DEBUG_SOCKET
 				else {
@@ -1316,6 +1345,7 @@ int main(int argc, char** argv)
 					else
 						printf("No actual data to receive\n");
 				}
+				close(accept_fd);
 			} else {
 				printf("Accept failed\n");
 #endif
