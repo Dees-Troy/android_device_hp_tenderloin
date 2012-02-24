@@ -40,6 +40,40 @@
 #define TS_SOCKET_TIMEOUT 500000
 #define SOCKET_BUFFER_SIZE 1
 
+int receive_ts_mode(int ts_fd) {
+	// Receives the mode from touchscreen socket
+	struct timeval seltmout;
+	fd_set fdset;
+	int sel_ret, recv_ret;
+	char recv_str[SOCKET_BUFFER_SIZE];
+
+	seltmout.tv_sec = 0;
+	seltmout.tv_usec = TS_SOCKET_TIMEOUT;
+	FD_ZERO(&fdset);
+	FD_SET(ts_fd, &fdset);
+	sel_ret = select(ts_fd + 1, &fdset, NULL, NULL, &seltmout);
+	if (sel_ret == 0) {
+		printf("Unable to retrieve current mode - timeout\n");
+		return -40;
+	} else {
+		recv_ret = recv(ts_fd, recv_str, SOCKET_BUFFER_SIZE, 0);
+		if (recv_ret > 0) {
+			if ((int)recv_str[0] == 0)
+				printf("Finger mode\n");
+			else if ((int)recv_str[0] == 1)
+				printf("Stylus mode\n");
+			else {
+				printf("Unknown mode '%i'\n", (int)recv_str[0]);
+				return -60;
+			}
+			return 0;
+		} else {
+			printf("Error receiving mode\n");
+			return -50;
+		}
+	}
+}
+
 int send_ts_socket(char *send_data) {
 	// Connects to the touchscreen socket
 	struct sockaddr_un unaddr;
@@ -65,38 +99,8 @@ int send_ts_socket(char *send_data) {
 					printf("Touchscreen set for stylus mode\n");
 					return 0;
 				} else {
-					struct timeval seltmout;
-					fd_set fdset;
-					int sel_ret;
-
-					seltmout.tv_sec = 0;
-					seltmout.tv_usec = TS_SOCKET_TIMEOUT;
-					FD_ZERO(&fdset);
-					FD_SET(ts_fd, &fdset);
-					sel_ret = select(ts_fd + 1, &fdset,	NULL, NULL, &seltmout);
-					if (sel_ret == 0) {
-						printf("Unable to retrieve current mode - timeout\n");
-						return -40;
-					} else {
-						char recv_str[SOCKET_BUFFER_SIZE];
-						int recv_ret;
-
-						recv_ret = recv(ts_fd, recv_str, SOCKET_BUFFER_SIZE, 0);
-						if (recv_ret > 0) {
-							if ((int)recv_str[0] == 0)
-								printf("Finger mode\n");
-							else if ((int)recv_str[0] == 1)
-								printf("Stylus mode\n");
-							else {
-								printf("Unknown mode '%i'\n", (int)recv_str[0]);
-								return -60;
-							}
-							return 0;
-						} else {
-							printf("Error receiving mode\n");
-							return -50;
-						}
-					}
+					// Get the current mode
+					return receive_ts_mode(ts_fd);
 				}
 			}
 		} else {
