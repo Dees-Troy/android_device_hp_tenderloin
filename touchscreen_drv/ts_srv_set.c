@@ -28,6 +28,7 @@
  * Run the binary and supply 1 argument to indicate the mode of operation
  * F = Finger
  * S = Stylus
+ * M = return current Mode
  */
 
 #include <fcntl.h>
@@ -87,7 +88,7 @@ int send_ts_socket(char *send_data) {
 		len = strlen(unaddr.sun_path) + sizeof(unaddr.sun_family);
 		if (connect(ts_fd, (struct sockaddr *)&unaddr, len) >= 0) {
 			int send_ret;
-			send_ret = send(ts_fd, send_data, 1, 0);
+			send_ret = send(ts_fd, send_data, sizeof(*send_data), 0);
 			if (send_ret <= 0) {
 				printf("Unable to send data to socket\n");
 				return -30;
